@@ -1,11 +1,9 @@
-Although TwinGP provides an efficient framework for large-scale GP mod
-eling, its performance depends on a number of design choices.
+Although TwinGP provides an efficient framework for large-scale GP modeling, its performance depends on a number of design choices.
 
 Many of these decisions are currently guided by intuition, prior experience,
 or trial and error. For example, global points may be selected using twinning,
 random sampling, or clustering-based methods. The number of global and local
-points can vary substantially, affecting both prediction accuracy and compu
-tational cost. Similarly, different kernel configurations may lead to different
+points can vary substantially, affecting both prediction accuracy and computational cost. Similarly, different kernel configurations may lead to different
 predictive behavior across datasets.
 Despite the success of TwinGP, there is currently no systematic framework
 for identifying which combinations of design choices produce the best tradeoff
