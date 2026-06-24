@@ -14,7 +14,6 @@
 # run time, RMSE, NLPD, etc. are recorded and a plot is created.
 # =============================================================================
 
-
 library(FNN)
 library(nloptr)
 library(first)
@@ -205,7 +204,6 @@ cat(sprintf("  Variable selection : %+.1f%%\n",
             100 * (res_B$rmse - res_A$rmse) / res_A$rmse))
 cat(sprintf("  Weighted variables : %+.1f%%\n\n",
             100 * (res_C$rmse - res_A$rmse) / res_A$rmse))
-
 
 # Diagnostic plots: predicted vs actual for the three methods side by side
 par(mfrow = c(1, 3), mar = c(4, 4, 3, 1))
