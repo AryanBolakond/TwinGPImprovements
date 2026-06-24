@@ -19,7 +19,7 @@ library(nloptr)
 library(first)
 library(twinning)
 
-source("C:/Users/Aryan/Downloads/RoshanJosephResearch/glgp.R")
+source("glgp.R")
 
 
 # Borehole function implementation and bounds
