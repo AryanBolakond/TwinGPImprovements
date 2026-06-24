@@ -21,7 +21,7 @@ library(nloptr)
 library(twinning)
 
 # Source GLGP — adjust path if needed
-source("C:/Users/Aryan/Downloads/RoshanJosephResearch/glgp.R")
+source("glgp.R")
 
 # Piston Simulation function implementation and bounds
 # (credit to sfu.ca/~ssurjano/piston.html)
