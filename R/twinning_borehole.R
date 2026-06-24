@@ -16,13 +16,12 @@
 # on RMSE, NLPD, and runtime.
 # =============================================================================
 
-
 library(FNN)
 library(nloptr)
 library(twinning)
 
-# Source GLGP — adjust path if needed
-source("C:/Users/Aryan/Downloads/RoshanJosephResearch/glgp.R")
+# Source — adjust path if needed
+source("glgp.R")
 
 # Borehole function implementation and bounds
 # (credit to sfu.ca/~ssurjano/borehole.html)
@@ -234,7 +233,6 @@ cat(sprintf("  Maximin multiplet: %+.1f%%\n\n",
 cat("Relative NLPD vs. Default baseline:\n")
 cat(sprintf("  Extreme point    : %+.4f\n", res_B$nlpd - res_A$nlpd))
 cat(sprintf("  Maximin multiplet: %+.4f\n\n", res_C$nlpd - res_A$nlpd))
-
 
 # Diagnostic plots — predicted vs actual for all three methods
 lims <- range(c(y_test, res_A$mu_pred, res_B$mu_pred, res_C$mu_pred))
