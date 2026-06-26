@@ -284,8 +284,46 @@ predict_point <- function(gp, ind, lam, nugget, test = FALSE, return_sigma = FAL
   list(mu = pred, sigma = sigma)
 }
 
-predict_point_global <- function(gp, ind, nugget, test = FALSE) {
-  predict_point(gp, ind, lam = 0, nugget = nugget, test = test, return_sigma = FALSE)
+predict_point_global <- function(gp, ind, nugget, test = FALSE, return_sigma = FALSE) {
+  dim_ <- gp$dim_
+  gNum_ <- gp$gNum_
+  gIndices <- gp$gIndices
+  gParams_ <- gp$gParams_
+  yg_ <- gp$yg_
+  Ainv_ <- gp$Ainv_
+  oneVecG_ <- gp$oneVecG_
+
+  query_row <- if (test) {
+    gp$x_test[ind, ]
+  } else {
+    gp$xy[ind, ]
+  }
+
+  row <- query_row[seq_len(dim_)]
+  rVec <- numeric(gNum_)
+  for (u in seq_len(gNum_)) {
+    row_u <- gp$xy[gIndices[u], seq_len(dim_)]
+    value <- 0.0
+    for (d in seq_len(dim_)) {
+      temp <- abs(row_u[d] - row[d])
+      value <- value - gParams_[d] * temp^gParams_[dim_ + 1L]
+    }
+    rVec[u] <- exp(value)
+  }
+
+  mu <- (matrix(colSums(Ainv_), nrow = 1L) %*% yg_) / sum(Ainv_)
+  yg_mu <- yg_ - oneVecG_ * mu[1, 1]
+  prediction <- mu + t(rVec) %*% Ainv_ %*% yg_mu
+  pred <- prediction[1, 1]
+
+  if (!return_sigma) {
+    return(pred)
+  }
+
+  tau2 <- (1.0 / gNum_) * t(yg_mu) %*% Ainv_ %*% yg_mu
+  quad <- (t(rVec) %*% Ainv_ %*% rVec)[1, 1]
+  sigma <- sqrt(tau2[1, 1] * max(1e-7, 1.0 + nugget - quad))
+  list(mu = pred, sigma = sigma)
 }
 
 get_mse <- function(gp, lam, nugget) {
@@ -390,11 +428,24 @@ estimate_sParams <- function(gp) {
 }
 
 gp_predict <- function(gp) {
-  find_Ainv(gp, gp$lam_, gp$nug_)
   test_num <- nrow(gp$x_test)
+
+  global_predictions <- numeric(test_num)
+  global_sigmas <- numeric(test_num)
+
+  global_nugget <- gp$gParams_[gp$dim_ + 2L]
+  find_Ainv(gp, lam = 0, nugget = global_nugget)
+
+  for (i in seq_len(test_num)) {
+    out <- predict_point_global(gp, i, global_nugget, test = TRUE, return_sigma = TRUE)
+    global_predictions[i] <- out$mu
+    global_sigmas[i] <- out$sigma
+  }
 
   predictions <- numeric(test_num)
   sigmas <- numeric(test_num)
+
+  find_Ainv(gp, gp$lam_, gp$nug_)
 
   for (i in seq_len(test_num)) {
     out <- predict_point(gp, i, gp$lam_, gp$nug_, test = TRUE, return_sigma = TRUE)
@@ -402,7 +453,12 @@ gp_predict <- function(gp) {
     sigmas[i] <- out$sigma
   }
 
-  list(mu = predictions, sigma = sigmas)
+  list(
+    mu = predictions,
+    sigma = sigmas,
+    global_mu = global_predictions,
+    global_sigma = global_sigmas
+  )
 }
 
 #' @param xy Training matrix (n x (d+1)), last column is response.
