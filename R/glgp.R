@@ -398,6 +398,42 @@ estimate_gParams <- function(gp) {
   invisible(gp)
 }
 
+set_global_params <- function(gp, global_params) {
+  dim_ <- gp$dim_
+  if (!is.list(global_params)) {
+    stop("global_params must be a list.")
+  }
+
+  a <- global_params[["a"]]
+  alpha <- global_params[["alpha"]]
+  nugget <- global_params[["nugget"]]
+
+  a <- as.numeric(a)
+  if (is.null(alpha)) {
+    alpha <- 1.95
+  }
+  if (is.null(nugget)) {
+    nugget <- 1e-7
+  }
+
+  if (length(a) != dim_) {
+    stop(sprintf("global_params$a must have length %d.", dim_))
+  }
+  if (any(!is.finite(a)) || any(a <= 0.0)) {
+    stop("global_params$a must be finite positive values.")
+  }
+  if (!is.numeric(alpha) || length(alpha) != 1L || !is.finite(alpha) || alpha <= 0.0) {
+    stop("global_params$alpha must be a single finite positive value.")
+  }
+  if (!is.numeric(nugget) || length(nugget) != 1L || !is.finite(nugget) || nugget < 0.0) {
+    stop("global_params$nugget must be a single finite non-negative value.")
+  }
+
+  gp$gParams_ <- c(a, alpha, nugget)
+  find_RgRl(gp)
+  invisible(gp)
+}
+
 estimate_sParams <- function(gp) {
   dim_ <- gp$dim_
   nugget_ <- gp$nugget_
@@ -469,14 +505,21 @@ gp_predict <- function(gp) {
 #' @param lNum Number of local neighbors.
 #' @param nugget If TRUE, optimize nugget jointly in hyperparameter search.
 #' @param leaf_size KD-tree leaf size (retained for API compatibility; FNN is used in R).
-#' @return List with components \code{mu} and \code{sigma}.
-glgp <- function(xy, x_test, gIndices, theta, predIndices, lNum, nugget = FALSE, leaf_size = 10L) {
+#' @param global_params Optional list with \code{a}, \code{alpha}, and \code{nugget}.
+#' @return List with components \code{mu}, \code{sigma}, \code{global_mu}, and \code{global_sigma}.
+glgp <- function(xy, x_test, gIndices, theta, predIndices, lNum, nugget = FALSE,
+                 leaf_size = 10L, global_params = NULL) {
   gp <- create_gp(xy, x_test, gIndices, theta, predIndices, lNum, leaf_size, nugget)
-  
+
   t0 <- proc.time()
-  estimate_gParams(gp)
+  if (is.null(global_params)) {
+    estimate_gParams(gp)
+  } else {
+    set_global_params(gp, global_params)
+  }
   t_gParams <- (proc.time() - t0)["elapsed"]
-  cat(sprintf("estimate_gParams : %.3f sec\n", t_gParams))
+  global_step <- if (is.null(global_params)) "estimate_gParams" else "set_global_params"
+  cat(sprintf("%-18s: %.3f sec\n", global_step, t_gParams))
   
   t0 <- proc.time()
   estimate_sParams(gp)
