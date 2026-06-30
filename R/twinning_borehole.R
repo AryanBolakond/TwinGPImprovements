@@ -101,12 +101,10 @@ t_twin_B   <- (proc.time() - t0)["elapsed"]
 cat(sprintf("[B] Extreme point      : %d global pts, twinning took %.3fs\n",
             length(gIndices_B), t_twin_B))
 
-# -----------------------------------------------------------------------------
 # METHOD C: MAXIMIN MULTIPLET
 #
 # We use k = n_global so we get exactly one representative per group.
 # strategy = 1 works for any k; strategy = 2 is better but needs k = 2^m.
-# -----------------------------------------------------------------------------
 k_mult <- n_global
 is_pow2  <- function(x) x >= 1 && bitwAnd(x, x - 1L) == 0L
 strategy <- if (is_pow2(k_mult)) 2L else 1L
