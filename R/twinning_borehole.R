@@ -108,39 +108,30 @@ cat(sprintf("[B] Extreme point      : %d global pts, twinning took %.3fs\n",
 # strategy = 1 works for any k; strategy = 2 is better but needs k = 2^m.
 # -----------------------------------------------------------------------------
 k_mult <- n_global
-# Use strategy 2 if k is a power of 2, otherwise fall back to strategy 1
-is_pow2   <- function(x) x >= 1 && bitwAnd(x, x - 1L) == 0L
-strategy  <- if (is_pow2(k_mult)) 2L else 1L
+is_pow2  <- function(x) x >= 1 && bitwAnd(x, x - 1L) == 0L
+strategy <- if (is_pow2(k_mult)) 2L else 1L
 cat(sprintf("[C] multiplet strategy : %d  (k=%d, power-of-2: %s)\n",
             strategy, k_mult, is_pow2(k_mult)))
 
 t0 <- proc.time()
 group_labels <- multiplet(X_train, k = k_mult, strategy = strategy,
                           format_data = TRUE)
-t_mult <- (proc.time() - t0)["elapsed"]
 
-# For each group, find the point that maximises min-distance to all points
-# outside the group
-X_scaled <- scale(X_train)    # use the same standardised space multiplet() uses
-
+# Pick one representative per group: the point closest to its group centroid.
+X_scaled   <- scale(X_train)
 gIndices_C <- integer(k_mult)
 for (g in seq_len(k_mult)) {
-  in_g    <- which(group_labels == g)
-  out_g   <- which(group_labels != g)
-  
+  in_g <- which(group_labels == g)
   if (length(in_g) == 1L) {
     gIndices_C[g] <- in_g
     next
   }
-  # For each candidate in group g, compute min distance to any outside point
-  D        <- as.matrix(FNN::get.knnx(X_scaled[out_g, , drop = FALSE],
-                                      X_scaled[in_g,  , drop = FALSE],
-                                      k = 1L)$nn.dist)
-  min_dists <- D[, 1L]
-  gIndices_C[g] <- in_g[which.max(min_dists)]
+  centroid  <- colMeans(X_scaled[in_g, , drop = FALSE])
+  sq_dists  <- rowSums(sweep(X_scaled[in_g, , drop = FALSE], 2, centroid)^2)
+  gIndices_C[g] <- in_g[which.min(sq_dists)]
 }
 gIndices_C <- unique(gIndices_C)
-t_twin_C   <- (proc.time() - t0)["elapsed"]   # includes multiplet + selection
+t_twin_C   <- (proc.time() - t0)["elapsed"]   # multiplet() call + cheap rep. selection
 cat(sprintf("[C] Maximin multiplet  : %d global pts, total took %.3fs\n",
             length(gIndices_C), t_twin_C))
 
