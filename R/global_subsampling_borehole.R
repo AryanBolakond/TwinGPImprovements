@@ -111,34 +111,12 @@ cat(sprintf("[B] Variable selection: %d global points selected\n", length(gIndic
 #           columns rescaled by sqrt(importance) so twin()'s energy-distance metric
 #           weighs less towards unimportant variables instead of dropping
 # -----------------------------------------------------------------------------
-k_mult <- n_global
-is_pow2  <- function(x) x >= 1 && bitwAnd(x, x - 1L) == 0L
-strategy <- if (is_pow2(k_mult)) 2L else 1L
-cat(sprintf("[C] multiplet strategy : %d  (k=%d, power-of-2: %s)\n",
-            strategy, k_mult, is_pow2(k_mult)))
+imp_C <- imp_B  # reuse importance vector to get weights instead of selection
+weights_C <- sqrt(imp_C / sum(imp_C))           # normalize so weights sum to 1 pre-sqrt
+X_weighted <- sweep(scale(X_train), 2, weights_C, `*`)  # standardize, then weight
 
-t0 <- proc.time()
-group_labels <- multiplet(X_train, k = k_mult, strategy = strategy,
-                          format_data = TRUE)
-
-# Pick one representative per group: the point closest to its group centroid.
-# This is negligible extra cost on top of the multiplet() call itself.
-X_scaled   <- scale(X_train)
-gIndices_C <- integer(k_mult)
-for (g in seq_len(k_mult)) {
-  in_g <- which(group_labels == g)
-  if (length(in_g) == 1L) {
-    gIndices_C[g] <- in_g
-    next
-  }
-  centroid  <- colMeans(X_scaled[in_g, , drop = FALSE])
-  sq_dists  <- rowSums(sweep(X_scaled[in_g, , drop = FALSE], 2, centroid)^2)
-  gIndices_C[g] <- in_g[which.min(sq_dists)]
-}
-gIndices_C <- unique(gIndices_C)
-t_twin_C   <- (proc.time() - t0)["elapsed"]   # multiplet() call + cheap rep. selection
-cat(sprintf("[C] Maximin multiplet  : %d global pts, total took %.3fs\n",
-            length(gIndices_C), t_twin_C))
+gIndices_weighted <- get_twin_indices(X_weighted, n_global)
+cat(sprintf("[C] Weighted variables: %d global points selected\n", length(gIndices_weighted)))
 
 # Common prediction-index set for lambda/nugget tuning
 make_predIndices <- function(gIndices, n_pred = 24) {
