@@ -292,7 +292,7 @@ get_mse <- function(gp, lam, nugget) {
   dim_   <- gp$dim_
   nugget <- (1.0 - lam) * gp$gParams_[dim_ + 2L] + lam * nugget
   find_Ainv(gp, lam, nugget)
-  
+
   mse <- 0.0
   for (i in seq_along(gp$predIndices)) {
     ind  <- gp$predIndices[i]
@@ -302,23 +302,117 @@ get_mse <- function(gp, lam, nugget) {
   mse
 }
 
-estimate_gParams <- function(gp) {
+#' Recycle a scalar or per-dimension bound vector to length \code{dim_}.
+normalize_hyperparam_bound <- function(bound, dim_, name) {
+  bound <- as.numeric(bound)
+  if (length(bound) == 1L) {
+    return(rep(bound, dim_))
+  }
+  if (length(bound) != dim_) {
+    stop(sprintf(
+      "%s must have length 1 or %d (got %d).",
+      name, dim_, length(bound)
+    ), call. = FALSE)
+  }
+  bound
+}
+
+#' Convert physical lengthscale bounds to GLGP global-kernel coefficient bounds.
+#'
+#' GLGP uses \code{exp(-sum(a * abs(h)^alpha))}; with fixed \code{alpha}, this
+#' matches a Gaussian kernel when \code{a = 1 / (2 * lengthscale^alpha)}.
+a_bounds_from_lengthscales <- function(lengthscale_lower, lengthscale_upper, alpha) {
+  lengthscale_lower <- as.numeric(lengthscale_lower)
+  lengthscale_upper <- as.numeric(lengthscale_upper)
+  alpha <- as.numeric(alpha)
+  if (any(lengthscale_lower <= 0) || any(lengthscale_upper <= 0)) {
+    stop("lengthscale bounds must be positive.", call. = FALSE)
+  }
+  if (any(lengthscale_lower > lengthscale_upper)) {
+    stop("lengthscale_lower cannot exceed lengthscale_upper.", call. = FALSE)
+  }
+  list(
+    theta_lower = 1.0 / (2.0 * lengthscale_upper^alpha),
+    theta_upper = 1.0 / (2.0 * lengthscale_lower^alpha)
+  )
+}
+
+set_gParams_from_list <- function(gp, global_params) {
+  dim_ <- gp$dim_
+  required <- c("a", "alpha", "nugget")
+  missing <- setdiff(required, names(global_params))
+  if (length(missing) > 0L) {
+    stop(
+      "global_params must be a list with components: ",
+      paste(required, collapse = ", "),
+      ". Missing: ",
+      paste(missing, collapse = ", "),
+      call. = FALSE
+    )
+  }
+
+  a <- as.numeric(global_params$a)
+  if (length(a) == 1L) {
+    a <- rep(a, dim_)
+  }
+  if (length(a) != dim_) {
+    stop(sprintf("global_params$a must have length 1 or %d.", dim_), call. = FALSE)
+  }
+
+  gParams <- numeric(dim_ + 2L)
+  gParams[seq_len(dim_)] <- a
+  gParams[dim_ + 1L] <- as.numeric(global_params$alpha)
+  gParams[dim_ + 2L] <- as.numeric(global_params$nugget)
+  gp$gParams_ <- gParams
+  find_RgRl(gp)
+  invisible(gp)
+}
+
+#' Estimate global-kernel hyperparameters by maximum likelihood.
+#'
+#' @param gp GP environment from \code{create_gp()}.
+#' @param theta_lower Lower bound(s) on global length-scale coefficients
+#'   \code{gParams[1:d]} (scalar or length-\code{d} vector).
+#' @param theta_upper Upper bound(s) on global length-scale coefficients
+#'   (scalar or length-\code{d} vector).
+#' @param alpha_lower Lower bound on the power-exponential exponent \code{alpha}.
+#' @param alpha_upper Upper bound on the power-exponential exponent \code{alpha}.
+estimate_gParams <- function(
+    gp,
+    theta_lower = 1e-7,
+    theta_upper = 1000,
+    alpha_lower = 1.0,
+    alpha_upper = 2.0
+) {
   dim_ <- gp$dim_
   nugget_ <- gp$nugget_
 
-  lb <- c(rep(1e-7, dim_), 1.0, log(1e-7))
-  ub <- c(rep(1000.0, dim_), 2.0, 0.0)
+  lb_theta <- normalize_hyperparam_bound(theta_lower, dim_, "theta_lower")
+  ub_theta <- normalize_hyperparam_bound(theta_upper, dim_, "theta_upper")
+  if (any(lb_theta >= ub_theta)) {
+    stop("Each theta_lower value must be strictly less than theta_upper.", call. = FALSE)
+  }
+  if (alpha_lower >= alpha_upper) {
+    stop("alpha_lower must be strictly less than alpha_upper.", call. = FALSE)
+  }
+
+  lb <- c(lb_theta, alpha_lower, log(1e-7))
+  ub <- c(ub_theta, alpha_upper, 0.0)
 
   opt_dim <- if (nugget_) dim_ + 2L else dim_ + 1L
   nugget_init <- if (nugget_) log(1e-3) else log(1e-7)
 
   rho <- 1.0 / sqrt(rep(dim_, dim_))
-  alpha <- exp(seq(3.0, -3.0, length.out = 11L))
+  if (alpha_lower == alpha_upper) {
+    alpha_grid <- alpha_lower
+  } else {
+    alpha_grid <- exp(seq(log(alpha_upper), log(alpha_lower), length.out = 11L))
+  }
 
-  nllg_values <- vapply(alpha, function(a) {
+  nllg_values <- vapply(alpha_grid, function(a) {
     gParams <- numeric(dim_ + 2L)
-    gParams[seq_len(dim_)] <- a * rho
-    gParams[dim_ + 1L] <- 1.95
+    gParams[seq_len(dim_)] <- pmin(pmax(a * rho, lb_theta), ub_theta)
+    gParams[dim_ + 1L] <- pmin(pmax(1.95, alpha_lower), alpha_upper)
     gParams[dim_ + 2L] <- nugget_init
     get_nllg(gp, gParams)
   }, numeric(1))
@@ -332,8 +426,11 @@ estimate_gParams <- function(gp) {
   opt_results <- vector("list", num_opt)
   for (i in seq_len(num_opt)) {
     gParams <- numeric(dim_ + 2L)
-    gParams[seq_len(dim_)] <- alpha[min_index] * rho * factor[i]
-    gParams[dim_ + 1L] <- 1.95
+    gParams[seq_len(dim_)] <- pmin(
+      pmax(alpha_grid[min_index] * rho * factor[i], lb_theta),
+      ub_theta
+    )
+    gParams[dim_ + 1L] <- pmin(pmax(1.95, alpha_lower), alpha_upper)
     gParams[dim_ + 2L] <- nugget_init
 
     res <- nloptr::nloptr(
@@ -405,6 +502,24 @@ gp_predict <- function(gp) {
   list(mu = predictions, sigma = sigmas)
 }
 
+gp_predict_global <- function(gp) {
+  dim_ <- gp$dim_
+  nugget <- gp$gParams_[dim_ + 2L]
+  find_Ainv(gp, lam = 0, nugget = nugget)
+  test_num <- nrow(gp$x_test)
+
+  predictions <- numeric(test_num)
+  sigmas <- numeric(test_num)
+
+  for (i in seq_len(test_num)) {
+    out <- predict_point(gp, i, lam = 0, nugget = nugget, test = TRUE, return_sigma = TRUE)
+    predictions[i] <- out$mu
+    sigmas[i] <- out$sigma
+  }
+
+  list(mu = predictions, sigma = sigmas)
+}
+
 #' @param xy Training matrix (n x (d+1)), last column is response.
 #' @param x_test Test inputs (m x (d+1)); response column ignored if present.
 #' @param gIndices Integer indices of global design points (1-based).
@@ -413,27 +528,74 @@ gp_predict <- function(gp) {
 #' @param lNum Number of local neighbors.
 #' @param nugget If TRUE, optimize nugget jointly in hyperparameter search.
 #' @param leaf_size KD-tree leaf size (retained for API compatibility; FNN is used in R).
-#' @return List with components \code{mu} and \code{sigma}.
-glgp <- function(xy, x_test, gIndices, theta, predIndices, lNum, nugget = FALSE, leaf_size = 10L) {
+#' @param theta_lower Lower bound(s) on global length-scale coefficients passed to
+#'   \code{estimate_gParams()} (scalar or length-\code{d} vector).
+#' @param theta_upper Upper bound(s) on global length-scale coefficients (scalar or
+#'   length-\code{d} vector).
+#' @param alpha_lower Lower bound on the global power-exponential exponent.
+#' @param alpha_upper Upper bound on the global power-exponential exponent.
+#' @param global_params Optional list with components \code{a}, \code{alpha}, and
+#'   \code{nugget}. When provided, global hyperparameters are fixed and
+#'   \code{estimate_gParams()} is skipped.
+#' @param predict_global If \code{TRUE}, also compute \code{global_mu} and
+#'   \code{global_sigma} (adds a second prediction pass over test points).
+#' @return List with \code{mu} and \code{sigma}. When \code{predict_global = TRUE},
+#'   also includes \code{global_mu} and \code{global_sigma}.
+glgp <- function(
+    xy,
+    x_test,
+    gIndices,
+    theta,
+    predIndices,
+    lNum,
+    nugget = FALSE,
+    leaf_size = 10L,
+    theta_lower = 1e-7,
+    theta_upper = 1000,
+    alpha_lower = 1.0,
+    alpha_upper = 2.0,
+    global_params = NULL,
+    predict_global = FALSE
+) {
   gp <- create_gp(xy, x_test, gIndices, theta, predIndices, lNum, leaf_size, nugget)
-  
+
   t0 <- proc.time()
-  estimate_gParams(gp)
+  if (is.null(global_params)) {
+    estimate_gParams(
+      gp,
+      theta_lower = theta_lower,
+      theta_upper = theta_upper,
+      alpha_lower = alpha_lower,
+      alpha_upper = alpha_upper
+    )
+  } else {
+    set_gParams_from_list(gp, global_params)
+  }
   t_gParams <- (proc.time() - t0)["elapsed"]
   cat(sprintf("estimate_gParams : %.3f sec\n", t_gParams))
-  
+
   t0 <- proc.time()
   estimate_sParams(gp)
   t_sParams <- (proc.time() - t0)["elapsed"]
   cat(sprintf("estimate_sParams : %.3f sec\n", t_sParams))
-  
+
   t0 <- proc.time()
   result <- gp_predict(gp)
+  if (predict_global) {
+    global_result <- gp_predict_global(gp)
+    result <- c(
+      result,
+      list(
+        global_mu = global_result$mu,
+        global_sigma = global_result$sigma
+      )
+    )
+  }
   t_predict <- (proc.time() - t0)["elapsed"]
   cat(sprintf("gp_predict       : %.3f sec\n", t_predict))
-  
+
   cat(sprintf("total            : %.3f sec\n", t_gParams + t_sParams + t_predict))
-  
+
   result
 }
 
