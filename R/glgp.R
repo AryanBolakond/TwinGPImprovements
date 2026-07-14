@@ -25,17 +25,17 @@ create_gp <- function(xy, x_test, gIndices, theta, predIndices, lNum, leaf_size,
   x_test <- as.matrix(x_test)
   gIndices <- as.integer(gIndices)
   predIndices <- as.integer(predIndices)
-
+  
   dim_ <- ncol(xy) - 1L
   gNum_ <- length(gIndices)
   l_ <- floor(dim_ / 2.0) + 2.0
-
+  
   gParams_ <- rep(0.0, dim_ + 2L)
   yg_ <- xy[gIndices, dim_ + 1L]
-
+  
   searchable_idx <- setdiff(seq_len(nrow(xy)), gIndices)
   searchable_coords <- xy[searchable_idx, seq_len(dim_), drop = FALSE]
-
+  
   env <- new.env(parent = emptyenv())
   env$xy <- xy
   env$x_test <- x_test
@@ -61,7 +61,7 @@ create_gp <- function(xy, x_test, gIndices, theta, predIndices, lNum, leaf_size,
   env$oneVecGL_ <- rep(1.0, gNum_ + lNum)
   env$searchable_idx <- searchable_idx
   env$searchable_coords <- searchable_coords
-
+  
   env
 }
 
@@ -82,10 +82,10 @@ find_RgRl <- function(gp) {
   gParams_ <- gp$gParams_
   theta_ <- gp$theta_
   l_ <- gp$l_
-
+  
   Rg <- matrix(0.0, gNum_, gNum_)
   Rl <- matrix(0.0, gNum_, gNum_)
-
+  
   for (i in seq_len(gNum_)) {
     for (j in i:gNum_) {
       if (i == j) {
@@ -109,7 +109,7 @@ find_RgRl <- function(gp) {
       }
     }
   }
-
+  
   gp$Rg_ <- Rg
   gp$Rl_ <- Rl
   invisible(gp)
@@ -119,7 +119,7 @@ find_Ainv <- function(gp, lam, nugget) {
   gNum_ <- gp$gNum_
   A <- (1.0 - lam) * gp$Rg_ + lam * gp$Rl_
   diag(A) <- diag(A) + nugget
-
+  
   eig <- eig_sym_asc(A)
   gp$Ainv_ <- stabilized_inverse(eig$values, eig$vectors, gNum_)
   invisible(gp)
@@ -131,10 +131,10 @@ get_nllg <- function(gp, gParams) {
   gIndices <- gp$gIndices
   yg_ <- gp$yg_
   oneVecG_ <- gp$oneVecG_
-
+  
   nugget <- exp(gParams[dim_ + 2L])
   Rg <- matrix(0.0, gNum_, gNum_)
-
+  
   for (i in seq_len(gNum_)) {
     for (j in i:gNum_) {
       if (i == j) {
@@ -152,19 +152,19 @@ get_nllg <- function(gp, gParams) {
       }
     }
   }
-
+  
   eig <- eig_sym_asc(Rg)
   kappa <- max(eig$values) / min(eig$values)
   delta <- max(0.0, min(eig$values) * (kappa - exp(20.0)) / (exp(20.0) - 1.0))
   delta_vec <- rep(delta, gNum_)
-
+  
   RgInv <- eig$vectors %*% diag(1.0 / (eig$values + delta_vec), gNum_, gNum_) %*% t(eig$vectors)
   RgLogDet <- stabilized_logdet(eig$values, gNum_, delta_vec)
-
+  
   mu <- (matrix(colSums(RgInv), nrow = 1L) %*% yg_) / sum(RgInv)
   yg_mu <- yg_ - oneVecG_ * mu[1, 1]
   tau2 <- (1.0 / gNum_) * t(yg_mu) %*% RgInv %*% yg_mu
-
+  
   gNum_ * log(tau2[1, 1]) + RgLogDet
 }
 
@@ -181,21 +181,21 @@ predict_point <- function(gp, ind, lam, nugget, test = FALSE, return_sigma = FAL
   oneVecG_ <- gp$oneVecG_
   oneVecL_ <- gp$oneVecL_
   oneVecGL_ <- gp$oneVecGL_
-
+  
   nn <- if (test) lNum_ else lNum_ + 1L
   query_row <- if (test) {
     gp$x_test[ind, ]
   } else {
     gp$xy[ind, ]
   }
-
+  
   index <- find_neighbors(gp, query_row, nn)
   local_start <- nn - lNum_ + 1L
   local_indices <- index[local_start:nn]
-
+  
   yl <- gp$xy[local_indices, dim_ + 1L]
   y <- c(yg_, yl)
-
+  
   D <- matrix(0.0, lNum_, lNum_)
   for (u in seq_len(lNum_)) {
     for (v in u:lNum_) {
@@ -217,7 +217,7 @@ predict_point <- function(gp, ind, lam, nugget, test = FALSE, return_sigma = FAL
       }
     }
   }
-
+  
   B <- matrix(0.0, gNum_, lNum_)
   for (u in seq_len(gNum_)) {
     for (v in seq_len(lNum_)) {
@@ -234,23 +234,23 @@ predict_point <- function(gp, ind, lam, nugget, test = FALSE, return_sigma = FAL
       B[u, v] <- (1.0 - lam) * exp(value) + lam * w
     }
   }
-
+  
   CAinv <- t(B) %*% Ainv_
   S <- D - CAinv %*% B
-
+  
   eigS <- eig_sym_asc(S)
   kappa <- max(eigS$values) / min(eigS$values)
   delta <- max(0.0, min(eigS$values) * (kappa - exp(20.0)) / (exp(20.0) - 1.0))
   delta_vec <- oneVecL_ * delta
   Sinv <- eigS$vectors %*% diag(1.0 / (eigS$values + delta_vec), lNum_, lNum_) %*% t(eigS$vectors)
-
+  
   CAinvTSinv <- t(CAinv) %*% Sinv
   Rinv <- matrix(0.0, gNum_ + lNum_, gNum_ + lNum_)
   Rinv[seq_len(gNum_), seq_len(gNum_)] <- Ainv_ + CAinvTSinv %*% CAinv
   Rinv[seq_len(gNum_), gNum_ + seq_len(lNum_)] <- -CAinvTSinv
   Rinv[gNum_ + seq_len(lNum_), seq_len(gNum_)] <- -t(CAinvTSinv)
   Rinv[gNum_ + seq_len(lNum_), gNum_ + seq_len(lNum_)] <- Sinv
-
+  
   row <- query_row[seq_len(dim_)]
   rVec <- numeric(gNum_ + lNum_)
   for (u in seq_len(gNum_ + lNum_)) {
@@ -269,16 +269,16 @@ predict_point <- function(gp, ind, lam, nugget, test = FALSE, return_sigma = FAL
     w <- wg_kernel(dist, theta_, l_)
     rVec[u] <- (1.0 - lam) * exp(value) + lam * w
   }
-
+  
   mu <- (matrix(colSums(Rinv), nrow = 1L) %*% y) / sum(Rinv)
   y_mu <- y - oneVecGL_ * mu[1, 1]
   prediction <- mu + t(rVec) %*% Rinv %*% y_mu
   pred <- prediction[1, 1]
-
+  
   if (!return_sigma) {
     return(pred)
   }
-
+  
   tau2 <- (1.0 / (gNum_ + lNum_)) * t(y_mu) %*% Rinv %*% y_mu
   quad <- (t(rVec) %*% Rinv %*% rVec)[1, 1]
   sigma <- sqrt(tau2[1, 1] * max(1e-7, 1.0 + nugget - quad))
@@ -293,7 +293,7 @@ get_mse <- function(gp, lam, nugget) {
   dim_   <- gp$dim_
   nugget <- (1.0 - lam) * gp$gParams_[dim_ + 2L] + lam * nugget
   find_Ainv(gp, lam, nugget)
-
+  
   mse <- 0.0
   for (i in seq_along(gp$predIndices)) {
     ind  <- gp$predIndices[i]
@@ -351,7 +351,7 @@ set_gParams_from_list <- function(gp, global_params) {
       call. = FALSE
     )
   }
-
+  
   a <- as.numeric(global_params$a)
   if (length(a) == 1L) {
     a <- rep(a, dim_)
@@ -359,7 +359,7 @@ set_gParams_from_list <- function(gp, global_params) {
   if (length(a) != dim_) {
     stop(sprintf("global_params$a must have length 1 or %d.", dim_), call. = FALSE)
   }
-
+  
   gParams <- numeric(dim_ + 2L)
   gParams[seq_len(dim_)] <- a
   gParams[dim_ + 1L] <- as.numeric(global_params$alpha)
@@ -387,7 +387,7 @@ estimate_gParams <- function(
 ) {
   dim_ <- gp$dim_
   nugget_ <- gp$nugget_
-
+  
   lb_theta <- normalize_hyperparam_bound(theta_lower, dim_, "theta_lower")
   ub_theta <- normalize_hyperparam_bound(theta_upper, dim_, "theta_upper")
   if (any(lb_theta >= ub_theta)) {
@@ -396,20 +396,20 @@ estimate_gParams <- function(
   if (alpha_lower >= alpha_upper) {
     stop("alpha_lower must be strictly less than alpha_upper.", call. = FALSE)
   }
-
+  
   lb <- c(lb_theta, alpha_lower, log(1e-7))
   ub <- c(ub_theta, alpha_upper, 0.0)
-
+  
   opt_dim <- if (nugget_) dim_ + 2L else dim_ + 1L
   nugget_init <- if (nugget_) log(1e-3) else log(1e-7)
-
+  
   rho <- 1.0 / sqrt(rep(dim_, dim_))
   if (alpha_lower == alpha_upper) {
     alpha_grid <- alpha_lower
   } else {
     alpha_grid <- exp(seq(log(alpha_upper), log(alpha_lower), length.out = 11L))
   }
-
+  
   nllg_values <- vapply(alpha_grid, function(a) {
     gParams <- numeric(dim_ + 2L)
     gParams[seq_len(dim_)] <- pmin(pmax(a * rho, lb_theta), ub_theta)
@@ -417,13 +417,13 @@ estimate_gParams <- function(
     gParams[dim_ + 2L] <- nugget_init
     get_nllg(gp, gParams)
   }, numeric(1))
-
+  
   min_index <- which.min(nllg_values)
   num_threads <- max(1L, parallel::detectCores(logical = TRUE))
   num_opt <- min(11L, max(3L, num_threads))
   factor <- exp(seq(-0.5, 0.5, length.out = num_opt))
   max_eval <- as.integer(min(500.0, 100.0 * log(1.0 + dim_)))
-
+  
   opt_results <- vector("list", num_opt)
   for (i in seq_len(num_opt)) {
     gParams <- numeric(dim_ + 2L)
@@ -433,7 +433,7 @@ estimate_gParams <- function(
     )
     gParams[dim_ + 1L] <- pmin(pmax(1.95, alpha_lower), alpha_upper)
     gParams[dim_ + 2L] <- nugget_init
-
+    
     res <- nloptr::nloptr(
       x0 = gParams[seq_len(opt_dim)],
       eval_f = function(x) {
@@ -445,11 +445,11 @@ estimate_gParams <- function(
       ub = ub[seq_len(opt_dim)],
       opts = list(algorithm = "NLOPT_LN_SBPLX", maxeval = max_eval)
     )
-
+    
     gParams[seq_len(opt_dim)] <- res$solution
     opt_results[[i]] <- list(nllg = res$objective, gParams = gParams)
   }
-
+  
   best <- opt_results[[which.min(vapply(opt_results, `[[`, numeric(1), "nllg"))]]
   gParams <- best$gParams
   gParams[dim_ + 2L] <- exp(gParams[dim_ + 2L])
@@ -461,14 +461,14 @@ estimate_gParams <- function(
 estimate_sParams <- function(gp) {
   dim_ <- gp$dim_
   nugget_ <- gp$nugget_
-
+  
   lb <- c(log(1e-7), log(1e-7))
   ub <- c(log(0.999), 0.0)
   opt_dim <- if (nugget_) 2L else 1L
   max_eval <- 20L
-
+  
   sParams <- c(log(1e-1), if (nugget_) log(1e-3) else log(1e-7))
-
+  
   res <- nloptr::nloptr(
     x0 = sParams[seq_len(opt_dim)],
     eval_f = function(x) {
@@ -480,7 +480,7 @@ estimate_sParams <- function(gp) {
     ub = ub[seq_len(opt_dim)],
     opts = list(algorithm = "NLOPT_LN_SBPLX", maxeval = max_eval)
   )
-
+  
   sParams[seq_len(opt_dim)] <- res$solution
   gp$lam_ <- exp(sParams[1L])
   gp$nug_local_ <- exp(sParams[2L])
@@ -491,16 +491,16 @@ estimate_sParams <- function(gp) {
 gp_predict <- function(gp) {
   find_Ainv(gp, gp$lam_, gp$nug_)
   test_num <- nrow(gp$x_test)
-
+  
   predictions <- numeric(test_num)
   sigmas <- numeric(test_num)
-
+  
   for (i in seq_len(test_num)) {
     out <- predict_point(gp, i, gp$lam_, gp$nug_, test = TRUE, return_sigma = TRUE)
     predictions[i] <- out$mu
     sigmas[i] <- out$sigma
   }
-
+  
   list(mu = predictions, sigma = sigmas)
 }
 
@@ -510,16 +510,16 @@ gp_predict_global <- function(gp) {
   nugget <- gp$gParams_[dim_ + 2L]
   find_Ainv(gp, lam = 0, nugget = nugget)
   test_num <- nrow(gp$x_test)
-
+  
   predictions <- numeric(test_num)
   sigmas <- numeric(test_num)
-
+  
   for (i in seq_len(test_num)) {
     out <- predict_point(gp, i, lam = 0, nugget = nugget, test = TRUE, return_sigma = TRUE)
     predictions[i] <- out$mu
     sigmas[i] <- out$sigma
   }
-
+  
   list(mu = predictions, sigma = sigmas)
 }
 
@@ -532,16 +532,16 @@ gp_predict_local <- function(gp) {
   }
   find_Ainv(gp, lam = 1, nugget = nugget)
   test_num <- nrow(gp$x_test)
-
+  
   predictions <- numeric(test_num)
   sigmas <- numeric(test_num)
-
+  
   for (i in seq_len(test_num)) {
     out <- predict_point(gp, i, lam = 1, nugget = nugget, test = TRUE, return_sigma = TRUE)
     predictions[i] <- out$mu
     sigmas[i] <- out$sigma
   }
-
+  
   list(mu = predictions, sigma = sigmas)
 }
 
@@ -609,7 +609,7 @@ glgp <- function(
     predict_global = FALSE
 ) {
   gp <- create_gp(xy, x_test, gIndices, theta, predIndices, lNum, leaf_size, nugget)
-
+  
   t0 <- proc.time()
   if (is.null(global_params)) {
     estimate_gParams(
@@ -624,12 +624,12 @@ glgp <- function(
   }
   t_gParams <- (proc.time() - t0)["elapsed"]
   cat(sprintf("estimate_gParams : %.3f sec\n", t_gParams))
-
+  
   t0 <- proc.time()
   estimate_sParams(gp)
   t_sParams <- (proc.time() - t0)["elapsed"]
   cat(sprintf("estimate_sParams : %.3f sec\n", t_sParams))
-
+  
   t0 <- proc.time()
   result <- gp_predict(gp)
   if (predict_global) {
@@ -647,9 +647,23 @@ glgp <- function(
   }
   t_predict <- (proc.time() - t0)["elapsed"]
   cat(sprintf("gp_predict       : %.3f sec\n", t_predict))
-
+  
   cat(sprintf("total            : %.3f sec\n", t_gParams + t_sParams + t_predict))
-
+  
+  if (predict_global) {
+    dim_ <- ncol(as.matrix(xy)) - 1L
+    x_test_mat <- as.matrix(x_test)
+    if (ncol(x_test_mat) >= dim_ + 1L) {
+      y_test <- x_test_mat[, dim_ + 1L]
+      rmse <- glgp_rmse(y_test, result)
+      cat(sprintf("RMSE (hybrid)    : %.6f\n", rmse$rmse))
+      cat(sprintf("RMSE (global)    : %.6f\n", rmse$rmse_global))
+      cat(sprintf("RMSE (local)     : %.6f\n", rmse$rmse_local))
+    } else {
+      cat("predict_global = TRUE but x_test has no response column; skipping RMSE printout.\n")
+    }
+  }
+  
   result
 }
 
