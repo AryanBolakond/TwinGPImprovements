@@ -51,6 +51,7 @@ create_gp <- function(xy, x_test, gIndices, theta, predIndices, lNum, leaf_size,
   env$gParams_ <- gParams_
   env$lam_ <- NA_real_
   env$nug_ <- NA_real_
+  env$nug_local_ <- NA_real_
   env$yg_ <- yg_
   env$Rg_ <- matrix(0.0, gNum_, gNum_)
   env$Rl_ <- matrix(0.0, gNum_, gNum_)
@@ -482,7 +483,8 @@ estimate_sParams <- function(gp) {
 
   sParams[seq_len(opt_dim)] <- res$solution
   gp$lam_ <- exp(sParams[1L])
-  gp$nug_ <- (1.0 - gp$lam_) * gp$gParams_[dim_ + 2L] + gp$lam_ * exp(sParams[2L])
+  gp$nug_local_ <- exp(sParams[2L])
+  gp$nug_ <- (1.0 - gp$lam_) * gp$gParams_[dim_ + 2L] + gp$lam_ * gp$nug_local_
   invisible(gp)
 }
 
@@ -502,6 +504,7 @@ gp_predict <- function(gp) {
   list(mu = predictions, sigma = sigmas)
 }
 
+#' Global-only predictions: \code{lam = 0}, global-kernel nugget.
 gp_predict_global <- function(gp) {
   dim_ <- gp$dim_
   nugget <- gp$gParams_[dim_ + 2L]
@@ -518,6 +521,51 @@ gp_predict_global <- function(gp) {
   }
 
   list(mu = predictions, sigma = sigmas)
+}
+
+#' Local-only predictions: \code{lam = 1}, local-kernel nugget.
+gp_predict_local <- function(gp) {
+  nugget <- if (!is.null(gp$nug_local_) && is.finite(gp$nug_local_)) {
+    gp$nug_local_
+  } else {
+    gp$nug_
+  }
+  find_Ainv(gp, lam = 1, nugget = nugget)
+  test_num <- nrow(gp$x_test)
+
+  predictions <- numeric(test_num)
+  sigmas <- numeric(test_num)
+
+  for (i in seq_len(test_num)) {
+    out <- predict_point(gp, i, lam = 1, nugget = nugget, test = TRUE, return_sigma = TRUE)
+    predictions[i] <- out$mu
+    sigmas[i] <- out$sigma
+  }
+
+  list(mu = predictions, sigma = sigmas)
+}
+
+#' RMSE for hybrid, global-only, and/or local-only predictions.
+#'
+#' @param y Numeric vector of observed responses (same order as predictions).
+#' @param result List returned by \code{glgp()} (must contain \code{mu}; optionally
+#'   \code{global_mu} and \code{local_mu}).
+#' @param y_mean, y_sd Optional mean / SD used to back-transform scaled predictions
+#'   (\code{pred * y_sd + y_mean}). Defaults leave predictions on the same scale as
+#'   \code{y}.
+#' @return Named list with \code{rmse} (hybrid). When available, also
+#'   \code{rmse_global} and \code{rmse_local}.
+glgp_rmse <- function(y, result, y_mean = 0, y_sd = 1) {
+  y <- as.numeric(y)
+  backtransform <- function(mu) as.numeric(mu) * y_sd + y_mean
+  out <- list(rmse = sqrt(mean((y - backtransform(result$mu))^2)))
+  if (!is.null(result$global_mu)) {
+    out$rmse_global <- sqrt(mean((y - backtransform(result$global_mu))^2))
+  }
+  if (!is.null(result$local_mu)) {
+    out$rmse_local <- sqrt(mean((y - backtransform(result$local_mu))^2))
+  }
+  out
 }
 
 #' @param xy Training matrix (n x (d+1)), last column is response.
@@ -537,10 +585,13 @@ gp_predict_global <- function(gp) {
 #' @param global_params Optional list with components \code{a}, \code{alpha}, and
 #'   \code{nugget}. When provided, global hyperparameters are fixed and
 #'   \code{estimate_gParams()} is skipped.
-#' @param predict_global If \code{TRUE}, also compute \code{global_mu} and
-#'   \code{global_sigma} (adds a second prediction pass over test points).
-#' @return List with \code{mu} and \code{sigma}. When \code{predict_global = TRUE},
-#'   also includes \code{global_mu} and \code{global_sigma}.
+#' @param predict_global If \code{TRUE}, also compute global-only (\code{lam = 0})
+#'   and local-only (\code{lam = 1}) predictions so RMSEs can be separated into
+#'   global vs local parts. Adds two extra prediction passes over test points.
+#' @return List with \code{mu} and \code{sigma} (hybrid GLGP). When
+#'   \code{predict_global = TRUE}, also includes \code{global_mu},
+#'   \code{global_sigma}, \code{local_mu}, and \code{local_sigma}. Use
+#'   \code{glgp_rmse(y_test, result)} to obtain hybrid / global / local RMSE.
 glgp <- function(
     xy,
     x_test,
@@ -583,11 +634,14 @@ glgp <- function(
   result <- gp_predict(gp)
   if (predict_global) {
     global_result <- gp_predict_global(gp)
+    local_result <- gp_predict_local(gp)
     result <- c(
       result,
       list(
         global_mu = global_result$mu,
-        global_sigma = global_result$sigma
+        global_sigma = global_result$sigma,
+        local_mu = local_result$mu,
+        local_sigma = local_result$sigma
       )
     )
   }
