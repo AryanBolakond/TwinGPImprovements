@@ -360,7 +360,7 @@ set_gParams_from_list <- function(gp, global_params) {
     stop(sprintf("global_params$a must have length 1 or %d.", dim_), call. = FALSE)
   }
   
-  gParams <- numeric(dim_ + 2L)
+  gParams <- numeric(2L * dim_ + 1L)
   gParams[seq_len(dim_)] <- a
   gParams[dim_ + 1L] <- as.numeric(global_params$alpha)
   gParams[dim_ + 2L] <- as.numeric(global_params$nugget)
@@ -426,7 +426,7 @@ estimate_gParams <- function(
   
   opt_results <- vector("list", num_opt)
   for (i in seq_len(num_opt)) {
-    gParams <- numeric(2L * dim_ + 1L)
+    gParams <- numeric(dim_ + 2L)
     gParams[seq_len(dim_)] <- pmin(
       pmax(alpha_grid[min_index] * rho * factor[i], lb_theta),
       ub_theta
@@ -649,6 +649,20 @@ glgp <- function(
   cat(sprintf("gp_predict       : %.3f sec\n", t_predict))
   
   cat(sprintf("total            : %.3f sec\n", t_gParams + t_sParams + t_predict))
+  
+  if (predict_global) {
+    dim_ <- ncol(as.matrix(xy)) - 1L
+    x_test_mat <- as.matrix(x_test)
+    if (ncol(x_test_mat) >= dim_ + 1L) {
+      y_test <- x_test_mat[, dim_ + 1L]
+      rmse <- glgp_rmse(y_test, result)
+      cat(sprintf("RMSE (hybrid)    : %.6f\n", rmse$rmse))
+      cat(sprintf("RMSE (global)    : %.6f\n", rmse$rmse_global))
+      cat(sprintf("RMSE (local)     : %.6f\n", rmse$rmse_local))
+    } else {
+      cat("predict_global = TRUE but x_test has no response column; skipping RMSE printout.\n")
+    }
+  }
   
   result
 }
