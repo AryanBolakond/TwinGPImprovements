@@ -19,7 +19,7 @@ library(nloptr)
 library(first)
 library(twinning)
 
-source("glgp.R")
+source("C:/Users/Aryan/Downloads/RoshanJosephResearch/glgp.R")
 
 
 # Borehole function implementation and bounds
@@ -138,7 +138,8 @@ run_method <- function(label, gIndices) {
     predIndices = predIdx,
     lNum        = lNum,
     nugget      = nugget,
-    leaf_size   = 20L
+    leaf_size   = 20L,
+    predict_global = TRUE
   )
   elapsed <- (proc.time() - t0)["elapsed"]
   
@@ -146,7 +147,10 @@ run_method <- function(label, gIndices) {
   sigma_pred <- result$sigma * y_sd
   
   errors    <- y_test - mu_pred
-  rmse      <- sqrt(mean(errors^2))
+  parts     <- glgp_rmse(y_test, result, y_mean = y_mean, y_sd = y_sd)
+  rmse      <- parts$rmse
+  rmse_global <- parts$rmse_global
+  rmse_local  <- parts$rmse_local
   mae       <- mean(abs(errors))
   r_squared <- 1 - sum(errors^2) / sum((y_test - mean(y_test))^2)
   nlpd      <- mean(0.5 * (errors / sigma_pred)^2 + log(sigma_pred) + 0.5 * log(2 * pi))
@@ -154,12 +158,17 @@ run_method <- function(label, gIndices) {
   lower95    <- mu_pred - 1.96 * sigma_pred
   upper95    <- mu_pred + 1.96 * sigma_pred
   coverage95 <- mean(y_test >= lower95 & y_test <= upper95)
+
+  cat(sprintf("  RMSE hybrid=%.4f  global=%.4f  local=%.4f\n",
+              rmse, rmse_global, rmse_local))
   
   list(
     label      = label,
     n_global   = length(gIndices),
     elapsed    = elapsed,
     rmse       = rmse,
+    rmse_global = rmse_global,
+    rmse_local  = rmse_local,
     mae        = mae,
     r_squared  = r_squared,
     nlpd       = nlpd,
@@ -179,6 +188,8 @@ summary_df <- data.frame(
   Method     = c(res_A$label, res_B$label, res_C$label),
   N_Global   = c(res_A$n_global, res_B$n_global, res_C$n_global),
   RMSE       = c(res_A$rmse, res_B$rmse, res_C$rmse),
+  RMSE_global = c(res_A$rmse_global, res_B$rmse_global, res_C$rmse_global),
+  RMSE_local  = c(res_A$rmse_local, res_B$rmse_local, res_C$rmse_local),
   MAE        = c(res_A$mae, res_B$mae, res_C$mae),
   R_squared  = c(res_A$r_squared, res_B$r_squared, res_C$r_squared),
   NLPD       = c(res_A$nlpd, res_B$nlpd, res_C$nlpd),
@@ -208,7 +219,8 @@ for (res in plot_results) {
        pch = 19, cex = 0.6, col = "#2166ac88",
        xlim = lims, ylim = lims,
        xlab = "Actual", ylab = "Predicted",
-       main = sprintf("%s\nRMSE=%.2f, NLPD=%.2f", res$label, res$rmse, res$nlpd))
+       main = sprintf("%s\nRMSE=%.2f (G=%.2f L=%.2f)",
+                      res$label, res$rmse, res$rmse_global, res$rmse_local))
   abline(0, 1, col = "red", lwd = 1.5)
 }
 
