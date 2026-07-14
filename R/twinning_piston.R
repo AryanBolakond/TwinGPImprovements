@@ -21,7 +21,7 @@ library(nloptr)
 library(twinning)
 
 # Source GLGP — adjust path if needed
-source("glgp.R")
+source("C:/Users/Aryan/Downloads/RoshanJosephResearch/glgp.R")
 
 # Piston Simulation function implementation and bounds
 # (credit to sfu.ca/~ssurjano/piston.html)
@@ -109,39 +109,31 @@ cat(sprintf("[B] Extreme point      : %d global pts, twinning took %.3fs\n",
 # strategy = 1 works for any k; strategy = 2 is better but needs k = 2^m.
 # -----------------------------------------------------------------------------
 k_mult <- n_global
-# Use strategy 2 if k is a power of 2, otherwise fall back to strategy 1
-is_pow2   <- function(x) x >= 1 && bitwAnd(x, x - 1L) == 0L
-strategy  <- if (is_pow2(k_mult)) 2L else 1L
+is_pow2  <- function(x) x >= 1 && bitwAnd(x, x - 1L) == 0L
+strategy <- if (is_pow2(k_mult)) 2L else 1L
 cat(sprintf("[C] multiplet strategy : %d  (k=%d, power-of-2: %s)\n",
             strategy, k_mult, is_pow2(k_mult)))
 
 t0 <- proc.time()
 group_labels <- multiplet(X_train, k = k_mult, strategy = strategy,
                           format_data = TRUE)
-t_mult <- (proc.time() - t0)["elapsed"]
 
-# For each group, find the point that maximises min-distance to all points
-# outside the group
-X_scaled <- scale(X_train)    # use the same standardised space multiplet() uses
-
+# Pick one representative per group: the point closest to its group centroid.
+# This is negligible extra cost on top of the multiplet() call itself.
+X_scaled   <- scale(X_train)
 gIndices_C <- integer(k_mult)
 for (g in seq_len(k_mult)) {
-  in_g    <- which(group_labels == g)
-  out_g   <- which(group_labels != g)
-  
+  in_g <- which(group_labels == g)
   if (length(in_g) == 1L) {
     gIndices_C[g] <- in_g
     next
   }
-  # For each candidate in group g, compute min distance to any outside point
-  D        <- as.matrix(FNN::get.knnx(X_scaled[out_g, , drop = FALSE],
-                                      X_scaled[in_g,  , drop = FALSE],
-                                      k = 1L)$nn.dist)
-  min_dists <- D[, 1L]
-  gIndices_C[g] <- in_g[which.max(min_dists)]
+  centroid  <- colMeans(X_scaled[in_g, , drop = FALSE])
+  sq_dists  <- rowSums(sweep(X_scaled[in_g, , drop = FALSE], 2, centroid)^2)
+  gIndices_C[g] <- in_g[which.min(sq_dists)]
 }
 gIndices_C <- unique(gIndices_C)
-t_twin_C   <- (proc.time() - t0)["elapsed"]
+t_twin_C   <- (proc.time() - t0)["elapsed"]   # multiplet() call + cheap rep. selection
 cat(sprintf("[C] Maximin multiplet  : %d global pts, total took %.3fs\n",
             length(gIndices_C), t_twin_C))
 
@@ -167,7 +159,8 @@ run_glgp <- function(label, gIndices, t_selection) {
     predIndices = predIdx,
     lNum        = lNum,
     nugget      = nugget,
-    leaf_size   = 20L
+    leaf_size   = 20L,
+    predict_global = TRUE
   )
   t_fit <- (proc.time() - t0)["elapsed"]
   
@@ -175,13 +168,19 @@ run_glgp <- function(label, gIndices, t_selection) {
   sigma_pred <- result$sigma * y_sd
   
   errors    <- y_test - mu_pred
-  rmse      <- sqrt(mean(errors^2))
+  parts     <- glgp_rmse(y_test, result, y_mean = y_mean, y_sd = y_sd)
+  rmse      <- parts$rmse
+  rmse_global <- parts$rmse_global
+  rmse_local  <- parts$rmse_local
   mae       <- mean(abs(errors))
   r2        <- 1 - sum(errors^2) / sum((y_test - mean(y_test))^2)
   nlpd      <- mean(0.5*(errors/sigma_pred)^2 + log(sigma_pred) + 0.5*log(2*pi))
   lower95   <- mu_pred - 1.96 * sigma_pred
   upper95   <- mu_pred + 1.96 * sigma_pred
   cov95     <- mean(y_test >= lower95 & y_test <= upper95)
+
+  cat(sprintf("  RMSE hybrid=%.4f  global=%.4f  local=%.4f\n",
+              rmse, rmse_global, rmse_local))
   
   list(
     label      = label,
@@ -190,6 +189,8 @@ run_glgp <- function(label, gIndices, t_selection) {
     t_fit      = t_fit,
     t_total    = t_selection + t_fit,
     rmse       = rmse,
+    rmse_global = rmse_global,
+    rmse_local  = rmse_local,
     mae        = mae,
     r2         = r2,
     nlpd       = nlpd,
@@ -213,10 +214,14 @@ summary_df <- data.frame(
   Method       = sapply(results, `[[`, "label"),
   N_Global     = sapply(results, `[[`, "n_global"),
   RMSE         = round(sapply(results, `[[`, "rmse"),  4),
+  RMSE_global  = round(sapply(results, `[[`, "rmse_global"), 4),
+  RMSE_local   = round(sapply(results, `[[`, "rmse_local"), 4),
   MAE          = round(sapply(results, `[[`, "mae"),   4),
   R2           = round(sapply(results, `[[`, "r2"),    4),
   NLPD         = round(sapply(results, `[[`, "nlpd"),  4),
   Coverage_95  = round(sapply(results, `[[`, "cov95") * 100, 1),
+  t_select_s   = round(sapply(results, `[[`, "t_select"), 3),
+  t_fit_s      = round(sapply(results, `[[`, "t_fit"),    2),
   t_total_s    = round(sapply(results, `[[`, "t_total"),  2)
 )
 
@@ -245,7 +250,8 @@ for (res in results) {
        xlim = lims, ylim = lims,
        xlab = "Actual cycle time (s)",
        ylab = "Predicted cycle time (s)",
-       main = sprintf("%s\nRMSE=%.4f  NLPD=%.3f", res$label, res$rmse, res$nlpd))
+       main = sprintf("%s\nRMSE=%.4f (G=%.4f L=%.4f)",
+                      res$label, res$rmse, res$rmse_global, res$rmse_local))
   abline(0, 1, col = "red", lwd = 1.5)
   legend("topleft", bty = "n", cex = 0.75,
          legend = sprintf("R\u00b2=%.3f\nCov95=%.0f%%", res$r2, res$cov95 * 100))
